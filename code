@@ -1,119 +1,92 @@
+from flask import Flask, render_template, request, redirect, session, jsonify
 import random
-import os
-import time
+import uuid
 
-# --- CONFIGURATION & FAKE STOCKS ---
-INITIAL_CASH = 10000
+app = Flask(__name__)
+app.secret_key = "investor_sim_secret"
+
+# --- CONFIGURATION & FICTIONAL DATA ---
 COMPANIES = {
-    "GLBO": {"name": "Globo-Chem", "price": 150.0, "volatility": 0.05, "desc": "A massive, boring industrial conglomerate."},
-    "SPAC": {"name": "Star-Hop", "price": 45.0, "volatility": 0.15, "desc": "Space tourism startup. High risk, high reward."},
-    "BORK": {"name": "BorkTech", "price": 20.0, "volatility": 0.08, "desc": "Smart collars for dogs. Very trendy."},
-    "CHIP": {"name": "NanoSlyce", "price": 310.0, "volatility": 0.04, "desc": "Essential semiconductor manufacturer."},
-    "VINE": {"name": "EcoRoot", "price": 12.0, "volatility": 0.12, "desc": "Lab-grown vegan grapes. Highly speculative."},
+    "NEO": {"name": "NeoTech Robotics", "sector": "Tech", "volatility": 0.08, "price": 150.0, "desc": "Leading AI and automation firm."},
+    "GLO": {"name": "Global Pharma", "sector": "Healthcare", "volatility": 0.05, "price": 85.0, "desc": "Focusing on longevity and vaccines."},
+    "ZEN": {"name": "Zenith Energy", "sector": "Energy", "volatility": 0.04, "price": 42.0, "desc": "Renewable hydrogen and solar fusion."},
+    "BRU": {"name": "Brew & Co", "sector": "Consumer", "volatility": 0.02, "price": 110.0, "desc": "Global premium beverage conglomerate."},
+    "VOID": {"name": "Void Exploration", "sector": "Tech", "volatility": 0.15, "price": 200.0, "desc": "High-risk asteroid mining startup."}
 }
 
-# --- GAME ENGINE ---
-class Simulator:
+class GameState:
     def __init__(self):
-        self.cash = INITIAL_CASH
-        self.portfolio = {ticker: 0 for ticker in COMPANIES}
-        self.history = {ticker: [COMPANIES[ticker]['price']] for ticker in COMPANIES}
-        self.day = 1
-        self.news = "The market opens. Investors are cautious."
+        self.stocks = COMPANIES.copy()
+        for t in self.stocks:
+            self.stocks[t]['history'] = [self.stocks[t]['price']]
+        self.news = ["Market is open. Welcome, Investor."]
+        self.economy_multiplier = 1.0 # 1.0 = neutral, 0.9 = recession, 1.1 = boom
 
-    def update_market(self):
-        """Simulates price movement and random events."""
-        event_impact = {ticker: 1.0 for ticker in COMPANIES}
-        
-        # Random News Events
-        events = [
-            ("A tech breakthrough for {t}!", 1.2, ["CHIP", "SPAC"]),
-            ("A CEO scandal hits {t}!", 0.8, ["GLBO", "BORK"]),
-            ("A global shortage of materials helps {t}.", 1.1, ["CHIP", "GLBO"]),
-            ("Heavy regulation announced for {t} industry.", 0.7, ["VINE", "BORK"]),
-            ("A viral social media trend boosts {t}!", 1.25, ["BORK", "VINE"]),
-        ]
-        
-        if random.random() < 0.3: # 30% chance of a news event
-            msg, impact, targets = random.choice(events)
-            target = random.choice(targets)
-            event_impact[target] = impact
-            self.news = msg.format(t=COMPANIES[target]['name'])
-        else:
-            self.news = "A quiet day on the trading floor."
+    def step(self):
+        # 1. Random Economic Shifts
+        if random.random() < 0.1:
+            self.economy_multiplier = random.uniform(0.9, 1.1)
+            msg = "Economic shift: Market is " + ("Heating up!" if self.economy_multiplier > 1 else "Cooling down...")
+            self.news.insert(0, msg)
 
-        # Apply price changes
-        for ticker, data in COMPANIES.items():
-            # Basic random walk: (Randomness + Event Impact)
-            change = random.uniform(-data['volatility'], data['volatility'])
-            new_price = data['price'] * (1 + change) * event_impact[ticker]
-            data['price'] = max(0.5, round(new_price, 2)) # Prices can't drop to 0
-            self.history[ticker].append(data['price'])
+        # 2. Update Prices
+        for ticker, data in self.stocks.items():
+            drift = (self.economy_multiplier - 1)
+            noise = random.uniform(-data['volatility'], data['volatility'])
+            change = 1 + drift + noise
+            
+            data['price'] = round(data['price'] * change, 2)
+            if data['price'] < 1: data['price'] = 1.0
+            data['history'].append(data['price'])
+            if len(data['history']) > 20: data['history'].pop(0)
 
-    def get_portfolio_value(self):
-        holdings_value = sum(self.portfolio[t] * COMPANIES[t]['price'] for t in COMPANIES)
-        return round(self.cash + holdings_value, 2)
+        # 3. Random Events
+        if random.random() < 0.2:
+            t = random.choice(list(self.stocks.keys()))
+            impact = random.uniform(-0.1, 0.1)
+            self.stocks[t]['price'] *= (1 + impact)
+            event_type = "positive" if impact > 0 else "negative"
+            self.news.insert(0, f"News Alert: A {event_type} event hit {self.stocks[t]['name']}!")
 
-    def display(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"--- DAY {self.day} ---")
-        print(f"NEWS: {self.news}")
-        print("-" * 50)
-        print(f"{'TICKER':<8} {'COMPANY':<15} {'PRICE':<10} {'CHANGE':<8}")
-        
-        for t, data in COMPANIES.items():
-            prev = self.history[t][-2] if len(self.history[t]) > 1 else data['price']
-            diff = data['price'] - prev
-            color = "+" if diff >= 0 else ""
-            print(f"{t:<8} {data['name']:<15} ${data['price']:<9} {color}{diff:.2f}")
+# Initialize state (In a real app, store this in a database/session)
+market = GameState()
 
-        print("-" * 50)
-        print(f"CASH: ${self.cash:.2f}")
-        print(f"PORTFOLIO VALUE: ${self.get_portfolio_value():.2f}")
-        print("HOLDINGS:", {k: v for k, v in self.portfolio.items() if v > 0})
-        print("-" * 50)
+@app.before_request
+def setup_user():
+    if 'balance' not in session:
+        session['balance'] = 100000.0 # Starting Cash
+        session['portfolio'] = {} # {Ticker: Quantity}
 
-def main():
-    sim = Simulator()
+@app.route('/')
+def index():
+    return render_template('index.html', stocks=market.stocks, news=market.news[:5], balance=session['balance'])
+
+@app.route('/trade', methods=['POST'])
+def trade():
+    ticker = request.form.get('ticker')
+    action = request.form.get('action') # 'buy' or 'sell'
+    qty = int(request.form.get('quantity'))
+    price = market.stocks[ticker]['price']
     
-    while True:
-        sim.display()
-        print("Actions: [B]uy, [S]ell, [N]ext Day, [Q]uit")
-        cmd = input("> ").lower()
+    current_shares = session['portfolio'].get(ticker, 0)
+    
+    if action == 'buy':
+        cost = price * qty
+        if session['balance'] >= cost:
+            session['balance'] -= cost
+            session['portfolio'][ticker] = current_shares + qty
+    elif action == 'sell':
+        if current_shares >= qty:
+            session['balance'] += price * qty
+            session['portfolio'][ticker] = current_shares - qty
+            
+    session.modified = True
+    return redirect('/')
 
-        if cmd == 'q':
-            break
-        elif cmd == 'n':
-            sim.day += 1
-            sim.update_market()
-        elif cmd == 'b':
-            ticker = input("Ticker to buy: ").upper()
-            if ticker in COMPANIES:
-                try:
-                    qty = int(input(f"Quantity of {ticker} to buy: "))
-                    cost = qty * COMPANIES[ticker]['price']
-                    if cost <= sim.cash:
-                        sim.cash -= cost
-                        sim.portfolio[ticker] += qty
-                    else:
-                        print("Not enough cash!")
-                        time.sleep(1)
-                except ValueError: print("Invalid quantity.")
-        elif cmd == 's':
-            ticker = input("Ticker to sell: ").upper()
-            if ticker in sim.portfolio:
-                try:
-                    qty = int(input(f"Quantity of {ticker} to sell: "))
-                    if qty <= sim.portfolio[ticker]:
-                        sim.cash += qty * COMPANIES[ticker]['price']
-                        sim.portfolio[ticker] -= qty
-                    else:
-                        print("You don't own that many shares!")
-                        time.sleep(1)
-                except ValueError: print("Invalid quantity.")
-        else:
-            print("Unknown command.")
-            time.sleep(0.5)
+@app.route('/next')
+def next_day():
+    market.step()
+    return redirect('/')
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    app.run(debug=True)
