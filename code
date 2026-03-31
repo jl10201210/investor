@@ -1,0 +1,119 @@
+import random
+import os
+import time
+
+# --- CONFIGURATION & FAKE STOCKS ---
+INITIAL_CASH = 10000
+COMPANIES = {
+    "GLBO": {"name": "Globo-Chem", "price": 150.0, "volatility": 0.05, "desc": "A massive, boring industrial conglomerate."},
+    "SPAC": {"name": "Star-Hop", "price": 45.0, "volatility": 0.15, "desc": "Space tourism startup. High risk, high reward."},
+    "BORK": {"name": "BorkTech", "price": 20.0, "volatility": 0.08, "desc": "Smart collars for dogs. Very trendy."},
+    "CHIP": {"name": "NanoSlyce", "price": 310.0, "volatility": 0.04, "desc": "Essential semiconductor manufacturer."},
+    "VINE": {"name": "EcoRoot", "price": 12.0, "volatility": 0.12, "desc": "Lab-grown vegan grapes. Highly speculative."},
+}
+
+# --- GAME ENGINE ---
+class Simulator:
+    def __init__(self):
+        self.cash = INITIAL_CASH
+        self.portfolio = {ticker: 0 for ticker in COMPANIES}
+        self.history = {ticker: [COMPANIES[ticker]['price']] for ticker in COMPANIES}
+        self.day = 1
+        self.news = "The market opens. Investors are cautious."
+
+    def update_market(self):
+        """Simulates price movement and random events."""
+        event_impact = {ticker: 1.0 for ticker in COMPANIES}
+        
+        # Random News Events
+        events = [
+            ("A tech breakthrough for {t}!", 1.2, ["CHIP", "SPAC"]),
+            ("A CEO scandal hits {t}!", 0.8, ["GLBO", "BORK"]),
+            ("A global shortage of materials helps {t}.", 1.1, ["CHIP", "GLBO"]),
+            ("Heavy regulation announced for {t} industry.", 0.7, ["VINE", "BORK"]),
+            ("A viral social media trend boosts {t}!", 1.25, ["BORK", "VINE"]),
+        ]
+        
+        if random.random() < 0.3: # 30% chance of a news event
+            msg, impact, targets = random.choice(events)
+            target = random.choice(targets)
+            event_impact[target] = impact
+            self.news = msg.format(t=COMPANIES[target]['name'])
+        else:
+            self.news = "A quiet day on the trading floor."
+
+        # Apply price changes
+        for ticker, data in COMPANIES.items():
+            # Basic random walk: (Randomness + Event Impact)
+            change = random.uniform(-data['volatility'], data['volatility'])
+            new_price = data['price'] * (1 + change) * event_impact[ticker]
+            data['price'] = max(0.5, round(new_price, 2)) # Prices can't drop to 0
+            self.history[ticker].append(data['price'])
+
+    def get_portfolio_value(self):
+        holdings_value = sum(self.portfolio[t] * COMPANIES[t]['price'] for t in COMPANIES)
+        return round(self.cash + holdings_value, 2)
+
+    def display(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(f"--- DAY {self.day} ---")
+        print(f"NEWS: {self.news}")
+        print("-" * 50)
+        print(f"{'TICKER':<8} {'COMPANY':<15} {'PRICE':<10} {'CHANGE':<8}")
+        
+        for t, data in COMPANIES.items():
+            prev = self.history[t][-2] if len(self.history[t]) > 1 else data['price']
+            diff = data['price'] - prev
+            color = "+" if diff >= 0 else ""
+            print(f"{t:<8} {data['name']:<15} ${data['price']:<9} {color}{diff:.2f}")
+
+        print("-" * 50)
+        print(f"CASH: ${self.cash:.2f}")
+        print(f"PORTFOLIO VALUE: ${self.get_portfolio_value():.2f}")
+        print("HOLDINGS:", {k: v for k, v in self.portfolio.items() if v > 0})
+        print("-" * 50)
+
+def main():
+    sim = Simulator()
+    
+    while True:
+        sim.display()
+        print("Actions: [B]uy, [S]ell, [N]ext Day, [Q]uit")
+        cmd = input("> ").lower()
+
+        if cmd == 'q':
+            break
+        elif cmd == 'n':
+            sim.day += 1
+            sim.update_market()
+        elif cmd == 'b':
+            ticker = input("Ticker to buy: ").upper()
+            if ticker in COMPANIES:
+                try:
+                    qty = int(input(f"Quantity of {ticker} to buy: "))
+                    cost = qty * COMPANIES[ticker]['price']
+                    if cost <= sim.cash:
+                        sim.cash -= cost
+                        sim.portfolio[ticker] += qty
+                    else:
+                        print("Not enough cash!")
+                        time.sleep(1)
+                except ValueError: print("Invalid quantity.")
+        elif cmd == 's':
+            ticker = input("Ticker to sell: ").upper()
+            if ticker in sim.portfolio:
+                try:
+                    qty = int(input(f"Quantity of {ticker} to sell: "))
+                    if qty <= sim.portfolio[ticker]:
+                        sim.cash += qty * COMPANIES[ticker]['price']
+                        sim.portfolio[ticker] -= qty
+                    else:
+                        print("You don't own that many shares!")
+                        time.sleep(1)
+                except ValueError: print("Invalid quantity.")
+        else:
+            print("Unknown command.")
+            time.sleep(0.5)
+
+if __name__ == "__main__":
+    main()
