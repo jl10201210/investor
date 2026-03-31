@@ -1,92 +1,170 @@
-from flask import Flask, render_template, request, redirect, session, jsonify
-import random
-import uuid
+from stock_market_sim import Stock_info, Append_stock
+import pickle
+import os
 
-app = Flask(__name__)
-app.secret_key = "investor_sim_secret"
 
-# --- CONFIGURATION & FICTIONAL DATA ---
-COMPANIES = {
-    "NEO": {"name": "NeoTech Robotics", "sector": "Tech", "volatility": 0.08, "price": 150.0, "desc": "Leading AI and automation firm."},
-    "GLO": {"name": "Global Pharma", "sector": "Healthcare", "volatility": 0.05, "price": 85.0, "desc": "Focusing on longevity and vaccines."},
-    "ZEN": {"name": "Zenith Energy", "sector": "Energy", "volatility": 0.04, "price": 42.0, "desc": "Renewable hydrogen and solar fusion."},
-    "BRU": {"name": "Brew & Co", "sector": "Consumer", "volatility": 0.02, "price": 110.0, "desc": "Global premium beverage conglomerate."},
-    "VOID": {"name": "Void Exploration", "sector": "Tech", "volatility": 0.15, "price": 200.0, "desc": "High-risk asteroid mining startup."}
-}
+def stock_market():
+    wallet = pickle.load(open('character_wallet.dat', 'rb'))
+    stocks_owned = list(pickle.load(open('stocks_owned.dat', 'rb')))
+    stock_purchase_log = pickle.load(open('stock_purchase_log.dat', 'rb'))
+    option = int(
+        input('1: Buy Stocks, 2: Sell Stocks, 3: To view purchase history, 4: Change stock position, 5 : To leave'))
 
-class GameState:
-    def __init__(self):
-        self.stocks = COMPANIES.copy()
-        for t in self.stocks:
-            self.stocks[t]['history'] = [self.stocks[t]['price']]
-        self.news = ["Market is open. Welcome, Investor."]
-        self.economy_multiplier = 1.0 # 1.0 = neutral, 0.9 = recession, 1.1 = boom
+    if option == 1:
+        purchase_stock(wallet=wallet, stocks_owned=stocks_owned, stock_purchase_log=stock_purchase_log)
 
-    def step(self):
-        # 1. Random Economic Shifts
-        if random.random() < 0.1:
-            self.economy_multiplier = random.uniform(0.9, 1.1)
-            msg = "Economic shift: Market is " + ("Heating up!" if self.economy_multiplier > 1 else "Cooling down...")
-            self.news.insert(0, msg)
+    elif option == 2:
+        stock_sell(wallet=wallet, stocks_owned=stocks_owned, stock_purchase_log=stock_purchase_log)
 
-        # 2. Update Prices
-        for ticker, data in self.stocks.items():
-            drift = (self.economy_multiplier - 1)
-            noise = random.uniform(-data['volatility'], data['volatility'])
-            change = 1 + drift + noise
-            
-            data['price'] = round(data['price'] * change, 2)
-            if data['price'] < 1: data['price'] = 1.0
-            data['history'].append(data['price'])
-            if len(data['history']) > 20: data['history'].pop(0)
+    elif option == 3:
+        print(f'Here is your Stock history\n{stock_purchase_log}')
+        stock_market()
+    elif option == 4:
 
-        # 3. Random Events
-        if random.random() < 0.2:
-            t = random.choice(list(self.stocks.keys()))
-            impact = random.uniform(-0.1, 0.1)
-            self.stocks[t]['price'] *= (1 + impact)
-            event_type = "positive" if impact > 0 else "negative"
-            self.news.insert(0, f"News Alert: A {event_type} event hit {self.stocks[t]['name']}!")
+        elements_position = list(map(int, input(
+            f'Swap your Stock positions, type position of the stock you wish to swap with another one\n{stocks_owned}').split()))
+        sort_stocks(stocks_owned=stocks_owned, pos1=elements_position[0], pos2=elements_position[1])
+        print(f'Swap done! {stocks_owned}')
+        stock_market()
+    else:
+        exit()
 
-# Initialize state (In a real app, store this in a database/session)
-market = GameState()
 
-@app.before_request
-def setup_user():
-    if 'balance' not in session:
-        session['balance'] = 100000.0 # Starting Cash
-        session['portfolio'] = {} # {Ticker: Quantity}
+def purchase_stock(wallet, stocks_owned, stock_purchase_log):
+    stock_ticker = str(input('Enter a stock ticker'))
+    buy_stock = Stock_info(stock_ticker)
+    price = round(buy_stock.return_stock_price())
+    maximum_shares = wallet / price
 
-@app.route('/')
-def index():
-    return render_template('index.html', stocks=market.stocks, news=market.news[:5], balance=session['balance'])
+    print(f'{buy_stock.ticker} Costs ', price)
+    print(f'How many you can buy: {round(maximum_shares - 1)}')
 
-@app.route('/trade', methods=['POST'])
-def trade():
-    ticker = request.form.get('ticker')
-    action = request.form.get('action') # 'buy' or 'sell'
-    qty = int(request.form.get('quantity'))
-    price = market.stocks[ticker]['price']
-    
-    current_shares = session['portfolio'].get(ticker, 0)
-    
-    if action == 'buy':
-        cost = price * qty
-        if session['balance'] >= cost:
-            session['balance'] -= cost
-            session['portfolio'][ticker] = current_shares + qty
-    elif action == 'sell':
-        if current_shares >= qty:
-            session['balance'] += price * qty
-            session['portfolio'][ticker] = current_shares - qty
-            
-    session.modified = True
-    return redirect('/')
+    purchase_amount = int(input(f'How many do you want to buy? Your Wallet: {wallet}'))
 
-@app.route('/next')
-def next_day():
-    market.step()
-    return redirect('/')
+    if wallet < purchase_amount * price:
+        print('You are too poor!')
+        stock_market()
+    else:
+        wallet = wallet - (purchase_amount * price)
+        bought_stocks = Append_stock(price, purchase_amount, stock_ticker)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+        # if no stock is in stocks_owned then it will just append the bought shares
+        # otherwise it will loop through stocks_owned
+        if not stocks_owned:
+            stocks_owned.append(bought_stocks.stocks_bought)
+
+        # if stock does not exist then append
+        elif [stock for stock in stocks_owned if stock_ticker not in stock]:
+            stocks_owned.append(bought_stocks.stocks_bought)
+
+        else:
+            # looping through the multi-dimensional stock array
+            for stock in stocks_owned:
+                if stock_ticker in stock:
+                    # fetching the index of the existing stock
+                    index = stocks_owned.index(stock)
+
+                    # checking if the matched stock is the same price
+                    # helps avoid stocks that are bought for lower getting mixed in with pre-existing shares
+                    if stocks_owned[index][0] != price:
+                        stocks_owned.append(bought_stocks.stocks_bought)
+                        print('hello world 1')
+                    else:
+                        # adding the amount of stocks purchased if the ticker already exists in stocks_owned
+                        stocks_owned[index][1] += purchase_amount
+                        print('hello world 2')
+                    break
+            # clearing the Append class list to prepare the next use
+            bought_stocks.stocks_bought.clear()
+
+        print(f'Purchase completed! Your remaining gold: {wallet}', bought_stocks.stocks_bought)
+
+        # logging purchase
+        stock_purchase_log += f'\n{str(bought_stocks.stocks_bought)}'
+
+        # saving the data
+        pickle.dump(wallet, open('character_wallet.dat', 'wb'))
+        pickle.dump(stocks_owned, open('stocks_owned.dat', 'wb'))
+        pickle.dump(stock_purchase_log, open('stock_purchase_log.dat', 'wb'))
+
+        stock_market()
+
+
+def stock_sell(wallet, stocks_owned, stock_purchase_log):
+    sell_stock = list(map(int, input(
+        f'Choose a stock to sell: {stocks_owned}, type the number the stock is in! 0 - ...\nThen type the amount you wish to sell').split()))
+    try:
+        # place where the stock is in the list
+        stock_slot = sell_stock[0]
+
+        # amount the player wants to sell
+        sell_amount = sell_stock[1]
+
+        # total shares owned by player
+        shares_owned = stocks_owned[stock_slot][1]
+
+        # fetching the ticker of the stock
+        ticker = stocks_owned[stock_slot][2]
+
+        # making new instance of of Stock_info to return current price of the stock bought
+        current_stock_price = Stock_info(ticker)
+
+        # live price + bought price
+        bought_price = int(stocks_owned[stock_slot][0])
+        live_price = current_stock_price.return_stock_price()
+
+        confirm_sell = str(
+            input(f'Are sure you want to sell y/n? Bought Price: ${bought_price}, Live Price: ${live_price}'))
+
+        # checking if the player has the amount of stocks he wants to sell and if he is sure
+        if shares_owned >= sell_amount and confirm_sell == 'y':
+            # adding the money the stocks sold for
+            sold_total = sell_amount * live_price
+            sold_profit = (live_price - bought_price) * sell_amount
+            wallet = sold_total + wallet
+
+            # deducting the sold stocks from the multidimensional array
+            stocks_owned[stock_slot][1] -= sell_amount
+            print(
+                f'Stocks have been sold for a profit of {sold_profit}\nBought Price: ${bought_price}, Sold Price: ${live_price}')
+
+            # removing the stock if it the amount is at zero
+            if stocks_owned[stock_slot][1] == 0:
+                stocks_owned.pop(stock_slot)
+
+            # logging sold stocks
+            stock_purchase_log += f'\n {ticker}, ${bought_price}, ${live_price}' + f' Sold Price: ${sold_total}'
+
+            # saving the data
+            pickle.dump(wallet, open('character_wallet.dat', 'wb'))
+            pickle.dump(stocks_owned, open('stocks_owned.dat', 'wb'))
+            pickle.dump(stock_purchase_log, open('stock_purchase_log.dat', 'wb'))
+
+            stock_market()
+
+        else:
+            print(f'Error: You do not own that many shares {shares_owned} / selling canceled')
+            stock_market()
+
+    except Exception:
+        print('Something was entered incorrectly')
+        stock_market()
+
+
+def sort_stocks(stocks_owned, pos1, pos2):
+    # swapping list element's spot
+    stocks_owned[pos1], stocks_owned[pos2] = stocks_owned[pos2], stocks_owned[pos1]
+    pickle.dump(stocks_owned, open('stocks_owned.dat', 'wb'))
+        
+# run this function first to get the files
+def set_up():
+    wallet = 0
+    stocks_owned = []
+    stock_purchase_log = ''
+
+    # saving player data
+    if not os.path.exists('character_name.dat'):
+        pickle.dump(wallet, open('character_wallet.dat', 'wb'))
+        pickle.dump(stock_purchase_log, open('stock_purchase_log.dat', 'wb'))
+        pickle.dump(stocks_owned, open('stocks_owned.dat', 'wb'))
+    stock_market()
